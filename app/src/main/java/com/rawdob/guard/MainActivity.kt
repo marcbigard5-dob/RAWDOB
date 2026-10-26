@@ -9,6 +9,7 @@ import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.net.ConnectivityManager
 import android.os.Process
 import android.provider.Settings
@@ -20,6 +21,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +37,8 @@ import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -172,13 +176,15 @@ class MainActivity : ComponentActivity() {
                     null
                 }
                 val permissions = packageInfo?.requestedPermissions.orEmpty()
-                val flags = packageInfo?.requestedPermissionsFlags ?: intArrayOf()
                 val requestedSensitive = permissions.toSet().intersect(sensitivePermissions)
-                val grantedSensitive = permissions.indices.filter { index ->
-                    permissions[index] in sensitivePermissions &&
-                        index < flags.size &&
-                        (flags[index] and android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
-                }.map { permissions[it] }.toSet()
+                // Cross-check current grant state through PackageManager instead of relying only
+                // on requestedPermissionsFlags, which can be incomplete on some Android builds.
+                val grantedSensitive = requestedSensitive.filter { permission ->
+                    try {
+                        packageManager.checkPermission(permission, info.packageName) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                    } catch (_: Exception) { false }
+                }.toSet()
                 InstalledAppInfo(
                     name = packageManager.getApplicationLabel(info).toString(),
                     packageName = info.packageName,
@@ -303,6 +309,7 @@ private fun RawdobApp(
     var apps by remember { mutableStateOf(initialApps) }
     var appsLoading by remember { mutableStateOf(true) }
     var appSearch by remember { mutableStateOf("") }
+    var selectedApp by remember { mutableStateOf<InstalledAppInfo?>(null) }
     val filteredApps = remember(apps, appSearch) {
         val query = appSearch.trim().lowercase(java.util.Locale.ROOT)
         if (query.isEmpty()) apps else apps.filter {
@@ -409,26 +416,61 @@ private fun RawdobApp(
                         } else {
                             filteredApps.forEach { app ->
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                                        Text(if (app.isSystemApp) "SYSTEM" else "USER", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                                    }
-                                    Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    if (app.sensitivePermissions.isNotEmpty()) {
-                                        Text(
-                                            "Sensitive requested: ${app.sensitivePermissions.size} · granted: ${app.grantedSensitivePermissions.size}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (app.grantedSensitivePermissions.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            app.sensitivePermissions.joinToString { it.substringAfterLast('.').removePrefix("READ_").removePrefix("WRITE_") },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable { selectedApp = app },
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text("${app.grantedSensitivePermissions.size} granted · ${app.sensitivePermissions.size} requested · ${app.specialAccess.size} special access",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (app.grantedSensitivePermissions.isNotEmpty() || app.specialAccess.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Text(if (app.isSystemApp) "SYSTEM" else "USER", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                                            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.secondary)
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                    selectedApp?.let { app ->
+                        AlertDialog(
+                            onDismissRequest = { selectedApp = null },
+                            title = { Text(app.name, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Column(Modifier.fillMaxWidth().height(420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (app.isSystemApp) "Package category: SYSTEM" else "Package category: USER / non-system flag")
+                                    Text("Sensitive permissions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                                    Text("Requested: ${app.sensitivePermissions.size} · currently granted: ${app.grantedSensitivePermissions.size}")
+                                    if (app.sensitivePermissions.isEmpty()) Text("No permissions from RAWDOB's sensitive-permission list were found.")
+                                    else app.sensitivePermissions.forEach { permission ->
+                                        val granted = permission in app.grantedSensitivePermissions
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(permission.substringAfterLast('.'), fontWeight = FontWeight.SemiBold)
+                                            Text(if (granted) "GRANTED by Android" else "Not currently granted (or not reported as granted)",
+                                                color = if (granted) Color(0xFF5CF2C2) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                    Text("Special access", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                                    if (app.specialAccess.isEmpty()) Text("No listed special access detected.")
+                                    else app.specialAccess.forEach { Text("• $it") }
+                                    Text("Requested permissions describe possible capabilities, not proof that the app used them or sent data. RAWDOB does not infer spying from permissions alone.",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
+                                    try { startActivity(intent) } catch (_: Exception) { }
+                                }) { Text("ANDROID APP SETTINGS") }
+                            },
+                            dismissButton = { TextButton(onClick = { selectedApp = null }) { Text("CLOSE") } }
+                        )
                     }
                 }
 
@@ -436,8 +478,8 @@ private fun RawdobApp(
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRIVACY AUDIT · SENSITIVE PERMISSIONS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                         val appsWithSensitiveRequests = apps.filter { it.sensitivePermissions.isNotEmpty() }
-                        val appsWithGrantedSensitive = initialApps.filter { it.grantedSensitivePermissions.isNotEmpty() }
-                        val appsWithSpecialAccess = initialApps.filter { it.specialAccess.isNotEmpty() }
+                        val appsWithGrantedSensitive = apps.filter { it.grantedSensitivePermissions.isNotEmpty() }
+                        val appsWithSpecialAccess = apps.filter { it.specialAccess.isNotEmpty() }
                         Text("${appsWithSensitiveRequests.size} apps request sensitive permissions · ${appsWithGrantedSensitive.size} show granted sensitive permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("${appsWithSpecialAccess.size} apps have detected special access (accessibility, notification access, device admin, or overlay)", style = MaterialTheme.typography.bodyMedium, color = if (appsWithSpecialAccess.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("A requested or granted permission is not proof of misuse. Special-access checks are limited to Android settings visible to RAWDOB and do not prove data collection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
