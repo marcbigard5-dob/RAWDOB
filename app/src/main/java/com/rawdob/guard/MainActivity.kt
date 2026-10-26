@@ -77,6 +77,8 @@ class MainActivity : ComponentActivity() {
                 initialLastDomain = prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
                 initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
+                initialBaselineDomains = prefs.getString("privacy_baseline_domains", "").orEmpty(),
+                onSaveBaseline = { prefs.edit().putString("privacy_baseline_domains", it).apply() },
                 initialApps = emptyList(),
                 onLoadApps = { deliver ->
                     lifecycleScope.launch {
@@ -259,6 +261,8 @@ private fun RawdobApp(
     initialLastDomain: String,
     initialLastAction: String,
     initialEvents: String,
+    initialBaselineDomains: String,
+    onSaveBaseline: (String) -> Unit,
     initialApps: List<InstalledAppInfo>,
     onLoadApps: (((List<InstalledAppInfo>) -> Unit) -> Unit),
     initialUsageAccess: Boolean,
@@ -276,6 +280,13 @@ private fun RawdobApp(
     var lastDomain by remember { mutableStateOf(initialLastDomain) }
     var lastAction by remember { mutableStateOf(initialLastAction) }
     var events by remember { mutableStateOf(initialEvents) }
+    var baselineDomains by remember { mutableStateOf(initialBaselineDomains) }
+    val observedDomains = remember(events) {
+        events.lines().map { it.substringAfterLast("|").trim().lowercase(java.util.Locale.ROOT) }
+            .filter { it.contains(".") && !it.contains(" ") }.distinct()
+    }
+    val baselineSet = remember(baselineDomains) { baselineDomains.lines().map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotEmpty() }.toSet() }
+    val newlyObservedDomains = observedDomains.filterNot { it in baselineSet }
     var blocklist by remember { mutableStateOf(initialBlocklist) }
     var usageAccess by remember { mutableStateOf(initialUsageAccess) }
     var networkUsage by remember { mutableStateOf<List<NetworkUsageInfo>>(emptyList()) }
@@ -496,6 +507,23 @@ private fun RawdobApp(
                             }
                         }
                         Text("Live log of DNS requests handled by RAWDOB only; Android does not expose every app process or encrypted packet through this DNS filter.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("LOCAL NETWORK BASELINE", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        Text("${newlyObservedDomains.size} domains in recent DNS events are not in your saved baseline", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = if (newlyObservedDomains.isNotEmpty()) Color(0xFFFFB454) else Color(0xFF5CF2C2))
+                        Text("This compares only the recent DNS event window with a baseline you save. A new domain is not proof of tracking, malware, or data leakage.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        newlyObservedDomains.take(8).forEach { domain ->
+                            Text("• $domain", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Button(onClick = {
+                            baselineDomains = observedDomains.joinToString("\n")
+                            onSaveBaseline(baselineDomains)
+                        }, modifier = Modifier.fillMaxWidth(), enabled = observedDomains.isNotEmpty()) {
+                            Text("SAVE RECENT DOMAINS AS BASELINE")
+                        }
                     }
                 }
 
