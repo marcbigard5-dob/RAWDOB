@@ -15,6 +15,9 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -130,11 +133,17 @@ class RawdobVpnService : VpnService() {
 
     private fun recordEvent(domain: String, blocked: Boolean) {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val action = if (blocked) "BLOCKED" else "ALLOWED"
+        val time = SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(Date())
+        val event = "$time  |  $action  |  $domain"
+        val previous = prefs.getString(KEY_EVENTS, "").orEmpty()
+        val events = (listOf(event) + previous.lines().filter { it.isNotBlank() }).take(40).joinToString("\n")
         prefs.edit()
             .putLong(KEY_QUERIES, prefs.getLong(KEY_QUERIES, 0L) + 1L)
             .putLong(KEY_BLOCKED, prefs.getLong(KEY_BLOCKED, 0L) + if (blocked) 1L else 0L)
             .putString(KEY_LAST_DOMAIN, domain)
-            .putString(KEY_LAST_ACTION, if (blocked) "BLOCKED" else "ALLOWED")
+            .putString(KEY_LAST_ACTION, action)
+            .putString(KEY_EVENTS, events)
             .apply()
     }
 
@@ -255,6 +264,7 @@ class RawdobVpnService : VpnService() {
         const val KEY_BLOCKED = "dns_blocked"
         const val KEY_LAST_DOMAIN = "last_dns_domain"
         const val KEY_LAST_ACTION = "last_dns_action"
+        const val KEY_EVENTS = "dns_event_log"
         const val KEY_BLOCKLIST = "custom_blocklist"
         private const val NOTIFICATION_ID = 7401
         private const val VIRTUAL_INTERFACE = "10.111.0.1"
