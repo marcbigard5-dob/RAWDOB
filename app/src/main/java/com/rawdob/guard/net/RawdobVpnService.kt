@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import com.rawdob.guard.R
+import com.rawdob.guard.net.DnsRuleEngine
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramPacket
@@ -125,10 +126,11 @@ class RawdobVpnService : VpnService() {
     }
 
     private fun isBlocked(domain: String): Boolean {
-        val custom = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_BLOCKLIST, "").orEmpty()
-            .lines().map { it.trim().lowercase() }.filter { it.isNotBlank() }
+        val customRules = getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getString(KEY_BLOCKLIST, "")
+            .orEmpty()
         val builtIn = setOf("doubleclick.net", "googlesyndication.com", "googleadservices.com")
-        return (builtIn + custom).any { domain == it || domain.endsWith(".$it") }
+        return DnsRuleEngine.shouldBlock(domain, customRules, builtIn)
     }
 
     private fun recordEvent(domain: String, blocked: Boolean) {
