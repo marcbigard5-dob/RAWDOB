@@ -211,6 +211,14 @@ private fun RawdobApp(
     var usageAccess by remember { mutableStateOf(initialUsageAccess) }
     var networkUsage by remember { mutableStateOf<List<NetworkUsageInfo>>(emptyList()) }
     var usageLoading by remember { mutableStateOf(false) }
+    var appSearch by remember { mutableStateOf("") }
+    val filteredApps = remember(initialApps, appSearch) {
+        val query = appSearch.trim().lowercase(java.util.Locale.ROOT)
+        if (query.isEmpty()) initialApps else initialApps.filter {
+            it.name.lowercase(java.util.Locale.ROOT).contains(query) ||
+                it.packageName.lowercase(java.util.Locale.ROOT).contains(query)
+        }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
@@ -292,16 +300,25 @@ private fun RawdobApp(
                         Text("APP INVENTORY", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                         Text("${initialApps.size} launchable apps detected", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("This is the installed-app list, not a list of running processes or per-app network connections.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = appSearch,
+                            onValueChange = { appSearch = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Search apps or package names") },
+                            singleLine = true
+                        )
+                        Text("Showing ${filteredApps.size} of ${initialApps.size} launchable apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (initialApps.isEmpty()) {
                             Text("No launchable apps were returned by Android.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (filteredApps.isEmpty()) {
+                            Text("No apps match this search.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            initialApps.take(16).forEach { app ->
+                            filteredApps.forEach { app ->
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                                     Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                            if (initialApps.size > 16) Text("Showing 16 of ${initialApps.size} apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
