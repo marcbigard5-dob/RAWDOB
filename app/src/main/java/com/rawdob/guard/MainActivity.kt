@@ -61,13 +61,15 @@ class MainActivity : ComponentActivity() {
                 initialBlocked = prefs.getLong(RawdobVpnService.KEY_BLOCKED, 0L),
                 initialLastDomain = prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
+                initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
                 readStats = {
                     RadarStats(
                         prefs.getBoolean(RawdobVpnService.KEY_ACTIVE, false),
                         prefs.getLong(RawdobVpnService.KEY_QUERIES, 0L),
                         prefs.getLong(RawdobVpnService.KEY_BLOCKED, 0L),
                         prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
-                        prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty()
+                        prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
+                        prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty()
                     )
                 },
                 initialBlocklist = prefs.getString(RawdobVpnService.KEY_BLOCKLIST, "").orEmpty(),
@@ -94,7 +96,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class RadarStats(val active: Boolean, val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String)
+private data class RadarStats(val active: Boolean, val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String, val events: String)
 
 private val RawdobDark = darkColorScheme(
     primary = Color(0xFF5CF2C2),
@@ -114,6 +116,7 @@ private fun RawdobApp(
     initialBlocked: Long,
     initialLastDomain: String,
     initialLastAction: String,
+    initialEvents: String,
     readStats: () -> RadarStats,
     initialBlocklist: String,
     onStart: () -> Unit,
@@ -125,6 +128,7 @@ private fun RawdobApp(
     var blockedCount by remember { mutableStateOf(initialBlocked) }
     var lastDomain by remember { mutableStateOf(initialLastDomain) }
     var lastAction by remember { mutableStateOf(initialLastAction) }
+    var events by remember { mutableStateOf(initialEvents) }
     var blocklist by remember { mutableStateOf(initialBlocklist) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -135,6 +139,7 @@ private fun RawdobApp(
             blockedCount = stats.blocked
             lastDomain = stats.lastDomain
             lastAction = stats.lastAction
+            events = stats.events
         }
     }
     var url by remember { mutableStateOf("") }
@@ -210,7 +215,20 @@ private fun RawdobApp(
                             color = if (lastAction == "BLOCKED") Color(0xFFFF8A8A) else MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        Text("The radar updates from locally recorded DNS events; it is not a packet-level view of all apps or encrypted traffic.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("RECENT BACKGROUND DNS EVENTS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        if (events.isBlank()) {
+                            Text("No DNS events recorded yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            events.lines().filter { it.isNotBlank() }.take(20).forEach { event ->
+                                val eventColor = when {
+                                    event.contains("| BLOCKED |") -> Color(0xFFFF6666)
+                                    event.contains("| ALLOWED |") -> Color(0xFF5CF2C2)
+                                    else -> Color(0xFFFFB454)
+                                }
+                                Text(event, style = MaterialTheme.typography.bodySmall, color = eventColor)
+                            }
+                        }
+                        Text("Live log of DNS requests handled by RAWDOB only; Android does not expose every app process or encrypted packet through this DNS filter.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -276,8 +294,14 @@ private fun RiskResultCard(result: UrlRiskResult) {
         UrlRiskLevel.INVALID -> "Invalid URL"
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        result.reasons.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+        val riskColor = when (result.level) {
+            UrlRiskLevel.LOW -> Color(0xFF5CF2C2)
+            UrlRiskLevel.REVIEW -> Color(0xFFFFB454)
+            UrlRiskLevel.HIGH -> Color(0xFFFF6666)
+            UrlRiskLevel.INVALID -> Color(0xFFFFB454)
+        }
+        Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = riskColor)
+        result.reasons.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium, color = riskColor) }
         Text(result.disclaimer, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
