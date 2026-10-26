@@ -155,27 +155,20 @@ class MainActivity : ComponentActivity() {
         )
         return packageManager.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
             .map { info ->
-                val requested = try {
+                val packageInfo = try {
                     @Suppress("DEPRECATION")
                     packageManager.getPackageInfo(info.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
-                        .requestedPermissions.orEmpty().toSet()
                 } catch (_: Exception) {
-                    emptySet()
+                    null
                 }
-                val requestedSensitive = requested.intersect(sensitivePermissions)
-                val grantedSensitive = try {
-                    @Suppress("DEPRECATION")
-                    val packageInfo = packageManager.getPackageInfo(info.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
-                    val permissions = packageInfo.requestedPermissions.orEmpty()
-                    val flags = packageInfo.requestedPermissionsFlags ?: intArrayOf()
-                    permissions.indices.filter { index ->
-                        permissions[index] in sensitivePermissions &&
-                            index < flags.size &&
-                            (flags[index] and android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
-                    }.map { permissions[it] }.toSet()
-                } catch (_: Exception) {
-                    emptySet()
-                }
+                val permissions = packageInfo?.requestedPermissions.orEmpty()
+                val flags = packageInfo?.requestedPermissionsFlags ?: intArrayOf()
+                val requestedSensitive = permissions.toSet().intersect(sensitivePermissions)
+                val grantedSensitive = permissions.indices.filter { index ->
+                    permissions[index] in sensitivePermissions &&
+                        index < flags.size &&
+                        (flags[index] and android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
+                }.map { permissions[it] }.toSet()
                 InstalledAppInfo(
                     name = packageManager.getApplicationLabel(info).toString(),
                     packageName = info.packageName,
