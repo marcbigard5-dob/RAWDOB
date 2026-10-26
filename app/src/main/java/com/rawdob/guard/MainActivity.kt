@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
                 readStats = {
                     RadarStats(
+                        prefs.getBoolean(RawdobVpnService.KEY_ACTIVE, false),
                         prefs.getLong(RawdobVpnService.KEY_QUERIES, 0L),
                         prefs.getLong(RawdobVpnService.KEY_BLOCKED, 0L),
                         prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
@@ -93,7 +94,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class RadarStats(val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String)
+private data class RadarStats(val active: Boolean, val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String)
 
 private val RawdobDark = darkColorScheme(
     primary = Color(0xFF5CF2C2),
@@ -129,6 +130,7 @@ private fun RawdobApp(
         while (true) {
             delay(1000)
             val stats = readStats()
+            active = stats.active
             queryCount = stats.queries
             blockedCount = stats.blocked
             lastDomain = stats.lastDomain
@@ -181,7 +183,6 @@ private fun RawdobApp(
                                     active = false
                                 } else {
                                     onStart()
-                                    active = true
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(52.dp),
