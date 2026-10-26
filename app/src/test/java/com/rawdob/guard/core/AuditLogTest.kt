@@ -24,7 +24,7 @@ class AuditLogTest {
         try {
             val log = AuditLog(file)
             log.append(AuditEvent(100L, "POLICY", "review host"))
-            file.writeText(file.readText().replace("review", "blocked"))
+            file.writeText(file.readText().replace("|100|", "|101|"))
             assertFalse(log.verify().valid)
         } finally { file.delete() }
     }
