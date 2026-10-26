@@ -1,12 +1,20 @@
 package com.rawdob.guard
 
+import android.app.AppOpsManager
+import android.app.usage.NetworkStats
+import android.app.usage.NetworkStatsManager
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.os.Process
+import android.provider.Settings
 import android.net.VpnService
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,7 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import com.rawdob.guard.core.UrlRiskChecker
 import com.rawdob.guard.core.UrlRiskLevel
@@ -63,6 +74,15 @@ class MainActivity : ComponentActivity() {
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
                 initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
                 initialApps = loadLaunchableApps(),
+                initialUsageAccess = hasUsageStatsAccess(),
+                onRequestUsageAccess = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
+                onRefreshNetworkUsage = { deliver ->
+                    lifecycleScope.launch {
+                        val permitted = hasUsageStatsAccess()
+                        val usage = withContext(Dispatchers.IO) { if (permitted) loadNetworkUsage() else emptyList() }
+                        deliver(permitted, usage)
+                    }
+                },
                 readStats = {
                     RadarStats(
                         prefs.getBoolean(RawdobVpnService.KEY_ACTIVE, false),
@@ -97,11 +117,46 @@ class MainActivity : ComponentActivity() {
                 val info = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
                 InstalledAppInfo(
                     name = resolveInfo.loadLabel(packageManager).toString(),
-                    packageName = info.packageName
+                    packageName = info.packageName,
+                    uid = info.uid
                 )
             }
             .distinctBy { it.packageName }
             .sortedBy { it.name.lowercase() }
+    }
+
+    private fun hasUsageStatsAccess(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        return appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName) == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun loadNetworkUsage(): List<NetworkUsageInfo> {
+        val manager = getSystemService(Context.NETWORK_STATS_SERVICE) as NetworkStatsManager
+        val end = System.currentTimeMillis()
+        val start = end - 24L * 60L * 60L * 1000L
+        return loadLaunchableApps().map { app ->
+            var received = 0L
+            var sent = 0L
+            listOf(ConnectivityManager.TYPE_WIFI, ConnectivityManager.TYPE_MOBILE).forEach { networkType ->
+                try {
+                    val stats = manager.queryDetailsForUid(networkType, null, start, end, app.uid)
+                    try {
+                        val bucket = NetworkStats.Bucket()
+                        while (stats.hasNextBucket()) {
+                            if (stats.getNextBucket(bucket)) {
+                                received += bucket.rxBytes
+                                sent += bucket.txBytes
+                            }
+                        }
+                    } finally {
+                        stats.close()
+                    }
+                } catch (_: SecurityException) {
+                } catch (_: IllegalArgumentException) {
+                }
+            }
+            NetworkUsageInfo(app.name, app.packageName, received, sent)
+        }.sortedByDescending { it.receivedBytes + it.sentBytes }
     }
 
     private fun requestProtection() {
@@ -111,7 +166,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class InstalledAppInfo(val name: String, val packageName: String)
+private data class InstalledAppInfo(val name: String, val packageName: String, val uid: Int)
+
+private data class NetworkUsageInfo(val name: String, val packageName: String, val receivedBytes: Long, val sentBytes: Long)
 
 private data class RadarStats(val active: Boolean, val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String, val events: String)
 
@@ -135,6 +192,9 @@ private fun RawdobApp(
     initialLastAction: String,
     initialEvents: String,
     initialApps: List<InstalledAppInfo>,
+    initialUsageAccess: Boolean,
+    onRequestUsageAccess: () -> Unit,
+    onRefreshNetworkUsage: (((Boolean, List<NetworkUsageInfo>) -> Unit) -> Unit),
     readStats: () -> RadarStats,
     initialBlocklist: String,
     onStart: () -> Unit,
@@ -148,6 +208,9 @@ private fun RawdobApp(
     var lastAction by remember { mutableStateOf(initialLastAction) }
     var events by remember { mutableStateOf(initialEvents) }
     var blocklist by remember { mutableStateOf(initialBlocklist) }
+    var usageAccess by remember { mutableStateOf(initialUsageAccess) }
+    var networkUsage by remember { mutableStateOf<List<NetworkUsageInfo>>(emptyList()) }
+    var usageLoading by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(1000)
@@ -244,6 +307,38 @@ private fun RawdobApp(
                 }
 
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("NETWORK USAGE BY APP · LAST 24 HOURS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        Text(if (usageAccess) "Usage Access detected" else "Usage Access permission required", style = MaterialTheme.typography.bodyMedium, color = if (usageAccess) Color(0xFF5CF2C2) else Color(0xFFFFB454))
+                        Text("Android-provided per-UID byte totals where available. Results may be delayed or unavailable on some devices and are not live packet attribution.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onRequestUsageAccess, modifier = Modifier.weight(1f)) { Text("GRANT ACCESS") }
+                            Button(onClick = {
+                                usageLoading = true
+                                onRefreshNetworkUsage { permitted, rows ->
+                                    usageAccess = permitted
+                                    networkUsage = rows
+                                    usageLoading = false
+                                }
+                            }, modifier = Modifier.weight(1f), enabled = !usageLoading) { Text(if (usageLoading) "READING…" else "REFRESH") }
+                        }
+                        if (!usageAccess) {
+                            Text("Enable RAWDOB under Android's Usage Access settings, return here, then tap REFRESH.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (networkUsage.isEmpty() && !usageLoading) {
+                            Text("No network usage rows loaded yet. Tap REFRESH to query the last 24 hours.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            networkUsage.take(10).forEach { row ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(row.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                    Text("↓ ${formatBytes(row.receivedBytes)}   ↑ ${formatBytes(row.sentBytes)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(row.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("LIVE DNS RADAR", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                         Text(lastDomain, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -309,6 +404,15 @@ private fun RawdobApp(
             }
         }
     }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kib = bytes / 1024.0
+    if (kib < 1024.0) return String.format(java.util.Locale.ROOT, "%.1f KiB", kib)
+    val mib = kib / 1024.0
+    if (mib < 1024.0) return String.format(java.util.Locale.ROOT, "%.1f MiB", mib)
+    return String.format(java.util.Locale.ROOT, "%.2f GiB", mib / 1024.0)
 }
 
 @Composable
