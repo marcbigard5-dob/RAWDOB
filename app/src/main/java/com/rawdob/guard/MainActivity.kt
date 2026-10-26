@@ -79,6 +79,14 @@ class MainActivity : ComponentActivity() {
                 initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
                 initialBaselineDomains = prefs.getString("privacy_baseline_domains", "").orEmpty(),
                 onSaveBaseline = { prefs.edit().putString("privacy_baseline_domains", it).apply() },
+                onExportReport = { report ->
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "RAWDOB local privacy report")
+                        putExtra(Intent.EXTRA_TEXT, report)
+                    }
+                    startActivity(Intent.createChooser(shareIntent, "Export RAWDOB report"))
+                },
                 initialApps = emptyList(),
                 onLoadApps = { deliver ->
                     lifecycleScope.launch {
@@ -263,6 +271,7 @@ private fun RawdobApp(
     initialEvents: String,
     initialBaselineDomains: String,
     onSaveBaseline: (String) -> Unit,
+    onExportReport: (String) -> Unit,
     initialApps: List<InstalledAppInfo>,
     onLoadApps: (((List<InstalledAppInfo>) -> Unit) -> Unit),
     initialUsageAccess: Boolean,
@@ -432,6 +441,37 @@ private fun RawdobApp(
                         Text("${appsWithSensitiveRequests.size} apps request sensitive permissions · ${appsWithGrantedSensitive.size} show granted sensitive permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("${appsWithSpecialAccess.size} apps have detected special access (accessibility, notification access, device admin, or overlay)", style = MaterialTheme.typography.bodyMedium, color = if (appsWithSpecialAccess.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("A requested or granted permission is not proof of misuse. Special-access checks are limited to Android settings visible to RAWDOB and do not prove data collection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick = {
+                            val report = buildString {
+                                appendLine("RAWDOB LOCAL PRIVACY REPORT")
+                                appendLine("Generated: " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(java.util.Date()))
+                                appendLine("Installed apps visible: ${apps.size}")
+                                appendLine("Apps requesting sensitive permissions: ${appsWithSensitiveRequests.size}")
+                                appendLine("Apps with granted sensitive permissions: ${appsWithGrantedSensitive.size}")
+                                appendLine("Apps with detected special access: ${appsWithSpecialAccess.size}")
+                                appendLine("DNS requests handled: $queryCount")
+                                appendLine("DNS requests blocked: $blockedCount")
+                                appendLine("VPN DNS filter active: $active")
+                                appendLine()
+                                appendLine("APP PERMISSION REVIEW")
+                                (appsWithGrantedSensitive + appsWithSpecialAccess).distinctBy { it.packageName }
+                                    .sortedByDescending { it.grantedSensitivePermissions.size + it.specialAccess.size }
+                                    .forEach { app ->
+                                        appendLine("${app.name} (${app.packageName})")
+                                        appendLine("  Granted sensitive permissions: " + app.grantedSensitivePermissions.joinToString { it.substringAfterLast('.') }.ifBlank { "none reported" })
+                                        appendLine("  Special access: " + app.specialAccess.joinToString().ifBlank { "none detected" })
+                                    }
+                                appendLine()
+                                appendLine("RECENT DNS EVENTS (RAWDOB only)")
+                                appendLine(events)
+                                appendLine()
+                                appendLine("LIMITATIONS")
+                                appendLine("This report does not prove data exfiltration. DNS events are not all network connections. HTTPS contents are not inspected. App permission data and special access visibility depend on Android.")
+                            }
+                            onExportReport(report)
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text("EXPORT LOCAL PRIVACY REPORT")
+                        }
                         (appsWithGrantedSensitive + appsWithSpecialAccess).distinctBy { it.packageName }
                             .sortedByDescending { it.grantedSensitivePermissions.size + it.specialAccess.size }
                             .take(16).forEach { app ->
