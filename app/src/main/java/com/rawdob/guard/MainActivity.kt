@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import androidx.core.content.ContextCompat
 import com.rawdob.guard.core.UrlRiskChecker
 import com.rawdob.guard.core.UrlRiskLevel
@@ -56,6 +58,17 @@ class MainActivity : ComponentActivity() {
             RawdobApp(
                 initiallyActive = prefs.getBoolean(RawdobVpnService.KEY_ACTIVE, false),
                 initialQueries = prefs.getLong(RawdobVpnService.KEY_QUERIES, 0L),
+                initialBlocked = prefs.getLong(RawdobVpnService.KEY_BLOCKED, 0L),
+                initialLastDomain = prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
+                initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
+                readStats = {
+                    RadarStats(
+                        prefs.getLong(RawdobVpnService.KEY_QUERIES, 0L),
+                        prefs.getLong(RawdobVpnService.KEY_BLOCKED, 0L),
+                        prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
+                        prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty()
+                    )
+                },
                 initialBlocklist = prefs.getString(RawdobVpnService.KEY_BLOCKLIST, "").orEmpty(),
                 onStart = { requestProtection() },
                 onStop = {
@@ -80,6 +93,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class RadarStats(val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String)
+
 private val RawdobDark = darkColorScheme(
     primary = Color(0xFF5CF2C2),
     onPrimary = Color(0xFF002117),
@@ -95,6 +110,10 @@ private val RawdobDark = darkColorScheme(
 private fun RawdobApp(
     initiallyActive: Boolean,
     initialQueries: Long,
+    initialBlocked: Long,
+    initialLastDomain: String,
+    initialLastAction: String,
+    readStats: () -> RadarStats,
     initialBlocklist: String,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -102,7 +121,20 @@ private fun RawdobApp(
 ) {
     var active by remember { mutableStateOf(initiallyActive) }
     var queryCount by remember { mutableStateOf(initialQueries) }
+    var blockedCount by remember { mutableStateOf(initialBlocked) }
+    var lastDomain by remember { mutableStateOf(initialLastDomain) }
+    var lastAction by remember { mutableStateOf(initialLastAction) }
     var blocklist by remember { mutableStateOf(initialBlocklist) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            val stats = readStats()
+            queryCount = stats.queries
+            blockedCount = stats.blocked
+            lastDomain = stats.lastDomain
+            lastAction = stats.lastAction
+        }
+    }
     var url by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<UrlRiskResult?>(null) }
 
@@ -164,8 +196,21 @@ private fun RawdobApp(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    MetricCard("DNS requests", queryCount.toString(), "processed by service", Modifier.weight(1f))
-                    MetricCard("Block rules", (3 + blocklist.lines().count { it.trim().isNotEmpty() }).toString(), "built-in + custom", Modifier.weight(1f))
+                    MetricCard("DNS requests", queryCount.toString(), "processed locally", Modifier.weight(1f))
+                    MetricCard("Blocked", blockedCount.toString(), "matched block rules", Modifier.weight(1f))
+                }
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("LIVE DNS RADAR", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        Text(lastDomain, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Latest action: $lastAction",
+                            color = if (lastAction == "BLOCKED") Color(0xFFFF8A8A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text("The radar updates from locally recorded DNS events; it is not a packet-level view of all apps or encrypted traffic.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
 
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
