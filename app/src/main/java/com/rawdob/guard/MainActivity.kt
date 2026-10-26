@@ -367,7 +367,7 @@ private fun RawdobApp(
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("CUSTOM BLOCKLIST", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                        Text("One domain per line. Example: ads.example.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Rules: block: ads.example.com or allow: trusted.example.com. A bare domain line still means BLOCK. Invalid entries are ignored.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
                             value = blocklist,
                             onValueChange = { blocklist = it },
