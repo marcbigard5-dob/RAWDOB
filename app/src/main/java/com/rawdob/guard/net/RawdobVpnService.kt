@@ -41,7 +41,7 @@ class RawdobVpnService : VpnService() {
         val descriptor = Builder()
             .setSession("RAWDOB DNS Protection")
             .setMtu(1500)
-            .addAddress(VIRTUAL_DNS, 32)
+            .addAddress(VIRTUAL_INTERFACE, 32)
             .addDnsServer(VIRTUAL_DNS)
             .addRoute(VIRTUAL_DNS, 32)
             .setBlocking(true)
@@ -246,6 +246,7 @@ class RawdobVpnService : VpnService() {
         const val KEY_QUERIES = "dns_queries"
         const val KEY_BLOCKLIST = "custom_blocklist"
         private const val NOTIFICATION_ID = 7401
+        private const val VIRTUAL_INTERFACE = "10.111.0.1"
         private const val VIRTUAL_DNS = "10.111.0.2"
         private const val UPSTREAM_DNS = "1.1.1.1"
     }
