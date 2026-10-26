@@ -111,18 +111,63 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadLaunchableApps(): List<InstalledAppInfo> {
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return packageManager.queryIntentActivities(launcherIntent, 0)
-            .mapNotNull { resolveInfo ->
-                val info = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
+        val sensitivePermissions = setOf(
+            "android.permission.CAMERA",
+            "android.permission.RECORD_AUDIO",
+            "android.permission.ACCESS_FINE_LOCATION",
+            "android.permission.ACCESS_COARSE_LOCATION",
+            "android.permission.ACCESS_BACKGROUND_LOCATION",
+            "android.permission.READ_CONTACTS",
+            "android.permission.WRITE_CONTACTS",
+            "android.permission.READ_CALENDAR",
+            "android.permission.WRITE_CALENDAR",
+            "android.permission.READ_CALL_LOG",
+            "android.permission.WRITE_CALL_LOG",
+            "android.permission.READ_SMS",
+            "android.permission.RECEIVE_SMS",
+            "android.permission.SEND_SMS",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.READ_PHONE_NUMBERS",
+            "android.permission.BODY_SENSORS",
+            "android.permission.ACTIVITY_RECOGNITION",
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+            "android.permission.READ_MEDIA_AUDIO"
+        )
+        return packageManager.getInstalledApplications(android.content.pm.PackageManager.GET_META_DATA)
+            .map { info ->
+                val requested = try {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageInfo(info.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+                        .requestedPermissions.orEmpty().toSet()
+                } catch (_: Exception) {
+                    emptySet()
+                }
+                val requestedSensitive = requested.intersect(sensitivePermissions)
+                val grantedSensitive = try {
+                    @Suppress("DEPRECATION")
+                    val packageInfo = packageManager.getPackageInfo(info.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+                    val permissions = packageInfo.requestedPermissions.orEmpty()
+                    val flags = packageInfo.requestedPermissionsFlags ?: intArrayOf()
+                    permissions.indices.filter { index ->
+                        permissions[index] in sensitivePermissions &&
+                            index < flags.size &&
+                            (flags[index] and android.content.pm.PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
+                    }.map { permissions[it] }.toSet()
+                } catch (_: Exception) {
+                    emptySet()
+                }
                 InstalledAppInfo(
-                    name = resolveInfo.loadLabel(packageManager).toString(),
+                    name = packageManager.getApplicationLabel(info).toString(),
                     packageName = info.packageName,
-                    uid = info.uid
+                    uid = info.uid,
+                    sensitivePermissions = requestedSensitive.toList().sorted(),
+                    grantedSensitivePermissions = grantedSensitive.toList().sorted(),
+                    isSystemApp = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                 )
             }
             .distinctBy { it.packageName }
-            .sortedBy { it.name.lowercase() }
+            .sortedWith(compareBy<InstalledAppInfo> { it.isSystemApp }.thenBy { it.name.lowercase() })
     }
 
     private fun hasUsageStatsAccess(): Boolean {
@@ -166,7 +211,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class InstalledAppInfo(val name: String, val packageName: String, val uid: Int)
+private data class InstalledAppInfo(val name: String, val packageName: String, val uid: Int, val sensitivePermissions: List<String>, val grantedSensitivePermissions: List<String>, val isSystemApp: Boolean)
 
 private data class NetworkUsageInfo(val name: String, val packageName: String, val receivedBytes: Long, val sentBytes: Long)
 
@@ -298,8 +343,8 @@ private fun RawdobApp(
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("APP INVENTORY", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                        Text("${initialApps.size} launchable apps detected", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("This is the installed-app list, not a list of running processes or per-app network connections.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${initialApps.size} installed apps visible to RAWDOB", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("Includes visible system and non-launcher packages. Android restrictions can still hide some packages; this is not a running-process list.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
                             value = appSearch,
                             onValueChange = { appSearch = it },
@@ -307,7 +352,7 @@ private fun RawdobApp(
                             label = { Text("Search apps or package names") },
                             singleLine = true
                         )
-                        Text("Showing ${filteredApps.size} of ${initialApps.size} launchable apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Showing ${filteredApps.size} of ${initialApps.size} visible installed apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (initialApps.isEmpty()) {
                             Text("No launchable apps were returned by Android.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else if (filteredApps.isEmpty()) {
@@ -315,10 +360,45 @@ private fun RawdobApp(
                         } else {
                             filteredApps.forEach { app ->
                                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                        Text(if (app.isSystemApp) "SYSTEM" else "USER", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                                    }
                                     Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (app.sensitivePermissions.isNotEmpty()) {
+                                        Text(
+                                            "Sensitive requested: ${app.sensitivePermissions.size} · granted: ${app.grantedSensitivePermissions.size}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (app.grantedSensitivePermissions.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            app.sensitivePermissions.joinToString { it.substringAfterLast('.').removePrefix("READ_").removePrefix("WRITE_") },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
+                        }
+                    }
+                }
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("PRIVACY AUDIT · SENSITIVE PERMISSIONS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        val appsWithSensitiveRequests = initialApps.filter { it.sensitivePermissions.isNotEmpty() }
+                        val appsWithGrantedSensitive = initialApps.filter { it.grantedSensitivePermissions.isNotEmpty() }
+                        Text("${appsWithSensitiveRequests.size} apps request sensitive permissions · ${appsWithGrantedSensitive.size} show granted sensitive permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("A requested or granted permission is not proof of misuse. Review whether each permission matches the app's purpose. Some special-access capabilities are not represented by runtime permission lists.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        appsWithGrantedSensitive.sortedByDescending { it.grantedSensitivePermissions.size }.take(12).forEach { app ->
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                Text(app.grantedSensitivePermissions.joinToString { it.substringAfterLast('.') }, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB454))
+                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (appsWithGrantedSensitive.isEmpty()) {
+                            Text("No granted sensitive permissions were reported for the visible app set.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
