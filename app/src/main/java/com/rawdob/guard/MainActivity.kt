@@ -77,7 +77,13 @@ class MainActivity : ComponentActivity() {
                 initialLastDomain = prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
                 initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
-                initialApps = loadLaunchableApps(),
+                initialApps = emptyList(),
+                onLoadApps = { deliver ->
+                    lifecycleScope.launch {
+                        val apps = withContext(Dispatchers.IO) { loadLaunchableApps() }
+                        deliver(apps)
+                    }
+                },
                 initialUsageAccess = hasUsageStatsAccess(),
                 onRequestUsageAccess = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) },
                 onRefreshNetworkUsage = { deliver ->
@@ -261,6 +267,7 @@ private fun RawdobApp(
     initialLastAction: String,
     initialEvents: String,
     initialApps: List<InstalledAppInfo>,
+    onLoadApps: (((List<InstalledAppInfo>) -> Unit) -> Unit),
     initialUsageAccess: Boolean,
     onRequestUsageAccess: () -> Unit,
     onRefreshNetworkUsage: (((Boolean, List<NetworkUsageInfo>) -> Unit) -> Unit),
@@ -280,15 +287,18 @@ private fun RawdobApp(
     var usageAccess by remember { mutableStateOf(initialUsageAccess) }
     var networkUsage by remember { mutableStateOf<List<NetworkUsageInfo>>(emptyList()) }
     var usageLoading by remember { mutableStateOf(false) }
+    var apps by remember { mutableStateOf(initialApps) }
+    var appsLoading by remember { mutableStateOf(true) }
     var appSearch by remember { mutableStateOf("") }
-    val filteredApps = remember(initialApps, appSearch) {
+    val filteredApps = remember(apps, appSearch) {
         val query = appSearch.trim().lowercase(java.util.Locale.ROOT)
-        if (query.isEmpty()) initialApps else initialApps.filter {
+        if (query.isEmpty()) apps else apps.filter {
             it.name.lowercase(java.util.Locale.ROOT).contains(query) ||
                 it.packageName.lowercase(java.util.Locale.ROOT).contains(query)
         }
     }
     LaunchedEffect(Unit) {
+        onLoadApps { loaded -> apps = loaded; appsLoading = false }
         while (true) {
             delay(1000)
             val stats = readStats()
@@ -367,7 +377,7 @@ private fun RawdobApp(
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("APP INVENTORY", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                        Text("${initialApps.size} installed apps visible to RAWDOB", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("${apps.size} installed apps visible to RAWDOB", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("Includes visible system and non-launcher packages. Android restrictions can still hide some packages; this is not a running-process list.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
                             value = appSearch,
@@ -376,8 +386,10 @@ private fun RawdobApp(
                             label = { Text("Search apps or package names") },
                             singleLine = true
                         )
-                        Text("Showing ${filteredApps.size} of ${initialApps.size} visible installed apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (initialApps.isEmpty()) {
+                        Text("Showing ${filteredApps.size} of ${apps.size} visible installed apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (appsLoading) {
+                            Text("Scanning installed apps and permissions…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (apps.isEmpty()) {
                             Text("No launchable apps were returned by Android.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else if (filteredApps.isEmpty()) {
                             Text("No apps match this search.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -410,7 +422,7 @@ private fun RawdobApp(
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("PRIVACY AUDIT · SENSITIVE PERMISSIONS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                        val appsWithSensitiveRequests = initialApps.filter { it.sensitivePermissions.isNotEmpty() }
+                        val appsWithSensitiveRequests = apps.filter { it.sensitivePermissions.isNotEmpty() }
                         val appsWithGrantedSensitive = initialApps.filter { it.grantedSensitivePermissions.isNotEmpty() }
                         val appsWithSpecialAccess = initialApps.filter { it.specialAccess.isNotEmpty() }
                         Text("${appsWithSensitiveRequests.size} apps request sensitive permissions · ${appsWithGrantedSensitive.size} show granted sensitive permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
