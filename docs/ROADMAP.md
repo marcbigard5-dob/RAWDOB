@@ -7,9 +7,11 @@
 - [x] Hash-chained local audit utility
 - [x] Unit tests and GitHub Actions workflow
 - [x] Confirm earlier baseline CI build passes on GitHub-hosted Android SDK image
-- [ ] Verify current DNS-filtering implementation passes CI and device-level tests
+- [x] Verify current DNS-filtering implementation passes CI build (device-level validation still pending)
 
 ## Stage 1 — reliable local core
+- [x] Add a launcher-app inventory using Android package visibility queries
+- [ ] Add optional Usage Access settings flow and clearly label usage-stat limitations
 - [ ] Add localized Arabic/French/English resources and language selection
 - [ ] Persist user rules with schema versioning and safe migration
 - [ ] Add audit viewer, redaction, retention, and export
@@ -31,6 +33,7 @@
 
 ## Stage 4 — full traffic firewall and release hardening
 - [ ] Select and implement a complete forwarding architecture for TCP/UDP/IPv4/IPv6
+- [ ] Never label launcher-app inventory as running-process or packet-level visibility
 - [ ] Test IPv4/IPv6, TCP/UDP, MTU, DNS, captive portals, Doze, and network handover
 - [ ] Test revocation, crashes, battery use, and kill-switch semantics on physical devices
 - [ ] Do not expose enforcement controls until all gates pass
