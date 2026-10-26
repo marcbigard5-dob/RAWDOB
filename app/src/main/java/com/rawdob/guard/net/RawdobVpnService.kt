@@ -73,9 +73,6 @@ class RawdobVpnService : VpnService() {
                 val packet = buffer.copyOf(length)
                 val reply = processDnsPacket(packet) ?: continue
                 output.write(reply)
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                    .putLong(KEY_QUERIES, getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_QUERIES, 0L) + 1L)
-                    .apply()
             } catch (_: Exception) {
                 if (running.get()) {
                     // Do not crash the process on a malformed packet; continue monitoring.
@@ -101,6 +98,7 @@ class RawdobVpnService : VpnService() {
         val domain = readQuestionName(dnsQuery) ?: return null
         val blocked = isBlocked(domain)
         val dnsReply = if (blocked) blockedReply(dnsQuery) else upstreamQuery(dnsQuery) ?: return null
+        recordEvent(domain, blocked)
         return buildResponsePacket(packet, ipHeaderLength, dnsReply)
     }
 
@@ -128,6 +126,16 @@ class RawdobVpnService : VpnService() {
             .lines().map { it.trim().lowercase() }.filter { it.isNotBlank() }
         val builtIn = setOf("doubleclick.net", "googlesyndication.com", "googleadservices.com")
         return (builtIn + custom).any { domain == it || domain.endsWith(".$it") }
+    }
+
+    private fun recordEvent(domain: String, blocked: Boolean) {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        prefs.edit()
+            .putLong(KEY_QUERIES, prefs.getLong(KEY_QUERIES, 0L) + 1L)
+            .putLong(KEY_BLOCKED, prefs.getLong(KEY_BLOCKED, 0L) + if (blocked) 1L else 0L)
+            .putString(KEY_LAST_DOMAIN, domain)
+            .putString(KEY_LAST_ACTION, if (blocked) "BLOCKED" else "ALLOWED")
+            .apply()
     }
 
     private fun blockedReply(query: ByteArray): ByteArray {
@@ -244,6 +252,9 @@ class RawdobVpnService : VpnService() {
         const val PREFS = "rawdob_security"
         const val KEY_ACTIVE = "vpn_active"
         const val KEY_QUERIES = "dns_queries"
+        const val KEY_BLOCKED = "dns_blocked"
+        const val KEY_LAST_DOMAIN = "last_dns_domain"
+        const val KEY_LAST_ACTION = "last_dns_action"
         const val KEY_BLOCKLIST = "custom_blocklist"
         private const val NOTIFICATION_ID = 7401
         private const val VIRTUAL_INTERFACE = "10.111.0.1"
