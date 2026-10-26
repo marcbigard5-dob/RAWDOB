@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
                 initialLastDomain = prefs.getString(RawdobVpnService.KEY_LAST_DOMAIN, "No DNS events yet").orEmpty(),
                 initialLastAction = prefs.getString(RawdobVpnService.KEY_LAST_ACTION, "WAITING").orEmpty(),
                 initialEvents = prefs.getString(RawdobVpnService.KEY_EVENTS, "").orEmpty(),
+                initialApps = loadLaunchableApps(),
                 readStats = {
                     RadarStats(
                         prefs.getBoolean(RawdobVpnService.KEY_ACTIVE, false),
@@ -89,12 +90,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun loadLaunchableApps(): List<InstalledAppInfo> {
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        return packageManager.queryIntentActivities(launcherIntent, 0)
+            .mapNotNull { resolveInfo ->
+                val info = resolveInfo.activityInfo?.applicationInfo ?: return@mapNotNull null
+                InstalledAppInfo(
+                    name = resolveInfo.loadLabel(packageManager).toString(),
+                    packageName = info.packageName
+                )
+            }
+            .distinctBy { it.packageName }
+            .sortedBy { it.name.lowercase() }
+    }
+
     private fun requestProtection() {
         val intent = VpnService.prepare(this)
         if (intent != null) vpnConsent.launch(intent)
         else ContextCompat.startForegroundService(this, Intent(this, RawdobVpnService::class.java))
     }
 }
+
+private data class InstalledAppInfo(val name: String, val packageName: String)
 
 private data class RadarStats(val active: Boolean, val queries: Long, val blocked: Long, val lastDomain: String, val lastAction: String, val events: String)
 
@@ -117,6 +134,7 @@ private fun RawdobApp(
     initialLastDomain: String,
     initialLastAction: String,
     initialEvents: String,
+    initialApps: List<InstalledAppInfo>,
     readStats: () -> RadarStats,
     initialBlocklist: String,
     onStart: () -> Unit,
@@ -204,6 +222,25 @@ private fun RawdobApp(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MetricCard("DNS requests", queryCount.toString(), "processed locally", Modifier.weight(1f))
                     MetricCard("Blocked", blockedCount.toString(), "matched block rules", Modifier.weight(1f))
+                }
+
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("APP INVENTORY", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+                        Text("${initialApps.size} launchable apps detected", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("This is the installed-app list, not a list of running processes or per-app network connections.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (initialApps.isEmpty()) {
+                            Text("No launchable apps were returned by Android.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            initialApps.take(16).forEach { app ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                    Text(app.packageName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            if (initialApps.size > 16) Text("Showing 16 of ${initialApps.size} apps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
 
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
