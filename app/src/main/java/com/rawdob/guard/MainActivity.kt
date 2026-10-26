@@ -310,6 +310,7 @@ private fun RawdobApp(
     var appsLoading by remember { mutableStateOf(true) }
     var appSearch by remember { mutableStateOf("") }
     var selectedApp by remember { mutableStateOf<InstalledAppInfo?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val filteredApps = remember(apps, appSearch) {
         val query = appSearch.trim().lowercase(java.util.Locale.ROOT)
         if (query.isEmpty()) apps else apps.filter {
@@ -466,7 +467,7 @@ private fun RawdobApp(
                             confirmButton = {
                                 TextButton(onClick = {
                                     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
-                                    try { startActivity(intent) } catch (_: Exception) { }
+                                    try { context.startActivity(intent) } catch (_: Exception) { }
                                 }) { Text("ANDROID APP SETTINGS") }
                             },
                             dismissButton = { TextButton(onClick = { selectedApp = null }) { Text("CLOSE") } }
