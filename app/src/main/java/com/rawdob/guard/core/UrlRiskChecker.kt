@@ -26,7 +26,7 @@ object UrlRiskChecker {
         val candidate = if (raw.contains("://")) raw else "https://$raw"
         val uri = try { URI(candidate) } catch (_: Exception) { return invalid("The URL could not be parsed.") }
         val scheme = uri.scheme?.lowercase(Locale.ROOT)
-        if (scheme !in setOf("http", "https")) return invalid("Only HTTP and HTTPS URLs are supported.")
+        if (scheme != "http" && scheme != "https") return invalid("Only HTTP and HTTPS URLs are supported.")
         val rawHost = uri.host ?: return invalid("A valid hostname is required.")
         val host = try { IDN.toASCII(rawHost).lowercase(Locale.ROOT) } catch (_: Exception) {
             return invalid("The hostname is not valid.")
