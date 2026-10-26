@@ -1,6 +1,10 @@
 package com.rawdob.guard
 
 import android.app.AppOpsManager
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.view.accessibility.AccessibilityManager
 import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
@@ -111,6 +115,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadLaunchableApps(): List<InstalledAppInfo> {
+        val accessibilityManager = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val accessibilityPackages = accessibilityManager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+            .mapNotNull { it.resolveInfo.serviceInfo?.packageName }.toSet()
+        val notificationListenerPackages = android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners"
+        ).orEmpty().split(':').mapNotNull { ComponentName.unflattenFromString(it)?.packageName }.toSet()
+        val devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val deviceAdminPackages = devicePolicyManager.activeAdmins.orEmpty().map { it.packageName }.toSet()
+        val appOpsManager = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val sensitivePermissions = setOf(
             "android.permission.CAMERA",
             "android.permission.RECORD_AUDIO",
@@ -163,6 +176,17 @@ class MainActivity : ComponentActivity() {
                     uid = info.uid,
                     sensitivePermissions = requestedSensitive.toList().sorted(),
                     grantedSensitivePermissions = grantedSensitive.toList().sorted(),
+                    specialAccess = buildList {
+                        if (info.packageName in accessibilityPackages) add("Accessibility service enabled")
+                        if (info.packageName in notificationListenerPackages) add("Notification access enabled")
+                        if (info.packageName in deviceAdminPackages) add("Device administrator")
+                        try {
+                            if (appOpsManager.checkOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, info.uid, info.packageName) == AppOpsManager.MODE_ALLOWED) {
+                                add("Display over other apps")
+                            }
+                        } catch (_: Exception) {
+                        }
+                    },
                     isSystemApp = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                 )
             }
@@ -211,7 +235,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class InstalledAppInfo(val name: String, val packageName: String, val uid: Int, val sensitivePermissions: List<String>, val grantedSensitivePermissions: List<String>, val isSystemApp: Boolean)
+private data class InstalledAppInfo(val name: String, val packageName: String, val uid: Int, val sensitivePermissions: List<String>, val grantedSensitivePermissions: List<String>, val specialAccess: List<String>, val isSystemApp: Boolean)
 
 private data class NetworkUsageInfo(val name: String, val packageName: String, val receivedBytes: Long, val sentBytes: Long)
 
@@ -388,17 +412,26 @@ private fun RawdobApp(
                         Text("PRIVACY AUDIT · SENSITIVE PERMISSIONS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                         val appsWithSensitiveRequests = initialApps.filter { it.sensitivePermissions.isNotEmpty() }
                         val appsWithGrantedSensitive = initialApps.filter { it.grantedSensitivePermissions.isNotEmpty() }
+                        val appsWithSpecialAccess = initialApps.filter { it.specialAccess.isNotEmpty() }
                         Text("${appsWithSensitiveRequests.size} apps request sensitive permissions · ${appsWithGrantedSensitive.size} show granted sensitive permissions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("A requested or granted permission is not proof of misuse. Review whether each permission matches the app's purpose. Some special-access capabilities are not represented by runtime permission lists.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        appsWithGrantedSensitive.sortedByDescending { it.grantedSensitivePermissions.size }.take(12).forEach { app ->
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                                Text(app.grantedSensitivePermissions.joinToString { it.substringAfterLast('.') }, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB454))
-                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${appsWithSpecialAccess.size} apps have detected special access (accessibility, notification access, device admin, or overlay)", style = MaterialTheme.typography.bodyMedium, color = if (appsWithSpecialAccess.isNotEmpty()) Color(0xFFFFB454) else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("A requested or granted permission is not proof of misuse. Special-access checks are limited to Android settings visible to RAWDOB and do not prove data collection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        (appsWithGrantedSensitive + appsWithSpecialAccess).distinctBy { it.packageName }
+                            .sortedByDescending { it.grantedSensitivePermissions.size + it.specialAccess.size }
+                            .take(16).forEach { app ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(app.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                    if (app.grantedSensitivePermissions.isNotEmpty()) {
+                                        Text("Granted: " + app.grantedSensitivePermissions.joinToString { it.substringAfterLast('.') }, style = MaterialTheme.typography.bodySmall, color = Color(0xFFFFB454))
+                                    }
+                                    if (app.specialAccess.isNotEmpty()) {
+                                        Text("Special access: " + app.specialAccess.joinToString(), style = MaterialTheme.typography.bodySmall, color = Color(0xFFFF8F8F))
+                                    }
+                                    Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
-                        }
-                        if (appsWithGrantedSensitive.isEmpty()) {
-                            Text("No granted sensitive permissions were reported for the visible app set.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (appsWithGrantedSensitive.isEmpty() && appsWithSpecialAccess.isEmpty()) {
+                            Text("No granted sensitive permissions or listed special-access indicators were reported for the visible app set.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
